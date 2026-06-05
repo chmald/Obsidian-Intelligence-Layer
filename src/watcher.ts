@@ -91,7 +91,11 @@ export class VaultWatcher {
   ): void {
     if (!isAllowedFile(fullPath)) return;
 
-    const notePath = relative(this.vaultPath, fullPath);
+    // Normalize to forward slashes — must match listAllNotes (vault.ts:239)
+    // so the graph index uses the same key shape on Windows (BW slash) and POSIX.
+    // Without this, the watcher updates a different key than the initial build,
+    // creating duplicate stale entries that break orphan detection + backlinks.
+    const notePath = relative(this.vaultPath, fullPath).replace(/\\/g, "/");
 
     // Cancel any pending update for this path
     const existing = this.pendingUpdates.get(notePath);

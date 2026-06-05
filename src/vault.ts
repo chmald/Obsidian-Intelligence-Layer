@@ -553,42 +553,67 @@ export async function readOpportunityNotes(
     vaultPath, config, customer, "opportunities",
   );
 
-  if (entityNotes.length > 0) {
-    return entityNotes.map((note) => ({
-      name: note.title,
-      guid: typeof note.frontmatter.opportunityId === "string"
-        ? note.frontmatter.opportunityId
-        : typeof note.frontmatter.guid === "string"
-          ? note.frontmatter.guid
-          : typeof note.frontmatter.opportunityid === "string"
-            ? note.frontmatter.opportunityid
-            : undefined,
-      status: typeof note.frontmatter.status === "string"
-        ? note.frontmatter.status
-        : undefined,
-      stage: typeof note.frontmatter.stage === "string"
-        ? note.frontmatter.stage
-        : undefined,
-      owner: typeof note.frontmatter.owner === "string"
-        ? note.frontmatter.owner
-        : undefined,
-      salesplay: typeof note.frontmatter.salesplay === "string"
-        ? note.frontmatter.salesplay
-        : undefined,
-      last_validated: typeof note.frontmatter.last_validated === "string"
-        ? note.frontmatter.last_validated
-        : undefined,
-    }));
+  // Read customer note frontmatter for opp_guids array (declared in oil.config.yaml
+  // as customer.optional). The reader unions sub-notes (preferred, richer metadata)
+  // with frontmatter GUIDs (lightweight, no per-opp file required). Sub-notes win
+  // when both reference the same GUID.
+  const customerPath = await resolveCustomerPath(vaultPath, config, customer);
+  let fmOppGuids: string[] = [];
+  let fmCustomer: Awaited<ReturnType<typeof readNote>> | null = null;
+  try {
+    fmCustomer = await readNote(vaultPath, customerPath);
+    const raw = fmCustomer.frontmatter.opp_guids;
+    if (Array.isArray(raw)) {
+      fmOppGuids = raw.filter((g): g is string => typeof g === "string" && g.length > 0);
+    }
+  } catch {
+    // Customer note missing or unreadable — proceed with whatever sub-notes give us.
   }
 
-  // Fallback: parse from customer file section
-  const customerPath = await resolveCustomerPath(vaultPath, config, customer);
-  try {
-    const parsed = await readNote(vaultPath, customerPath);
-    return parseOpportunities(parsed.sections.get("Opportunities") ?? "");
-  } catch {
-    return [];
+  const subNoteRefs: OpportunityRef[] = entityNotes.map((note) => ({
+    name: note.title,
+    guid: typeof note.frontmatter.opportunityId === "string"
+      ? note.frontmatter.opportunityId
+      : typeof note.frontmatter.guid === "string"
+        ? note.frontmatter.guid
+        : typeof note.frontmatter.opportunityid === "string"
+          ? note.frontmatter.opportunityid
+          : undefined,
+    status: typeof note.frontmatter.status === "string"
+      ? note.frontmatter.status
+      : undefined,
+    stage: typeof note.frontmatter.stage === "string"
+      ? note.frontmatter.stage
+      : undefined,
+    owner: typeof note.frontmatter.owner === "string"
+      ? note.frontmatter.owner
+      : undefined,
+    salesplay: typeof note.frontmatter.salesplay === "string"
+      ? note.frontmatter.salesplay
+      : undefined,
+    last_validated: typeof note.frontmatter.last_validated === "string"
+      ? note.frontmatter.last_validated
+      : undefined,
+  }));
+
+  // Union: sub-notes first (richer), then any frontmatter GUIDs not already covered.
+  const seenGuids = new Set(
+    subNoteRefs.map((r) => r.guid).filter((g): g is string => typeof g === "string"),
+  );
+  const fmRefs: OpportunityRef[] = fmOppGuids
+    .filter((guid) => !seenGuids.has(guid))
+    .map((guid) => ({ name: guid, guid }));
+
+  if (subNoteRefs.length > 0 || fmRefs.length > 0) {
+    return [...subNoteRefs, ...fmRefs];
   }
+
+  // Fallback: parse from customer file section (only when neither sub-notes
+  // nor frontmatter opp_guids produced anything).
+  if (fmCustomer) {
+    return parseOpportunities(fmCustomer.sections.get("Opportunities") ?? "");
+  }
+  return [];
 }
 
 /**

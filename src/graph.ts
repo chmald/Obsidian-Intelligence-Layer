@@ -96,6 +96,10 @@ export class GraphIndex {
    * Parse a single note and add it to the index.
    */
   private async indexNote(notePath: string): Promise<void> {
+    // Defensive: normalize path separator. Primary normalization is at call sites
+    // (vault.ts:239 listAllNotes, watcher.ts handleChange), but this prevents future
+    // regressions if a new caller forgets.
+    notePath = notePath.replace(/\\/g, "/");
     try {
       const fullPath = join(this.vaultPath, notePath);
       const raw = await readFile(fullPath, "utf-8");
@@ -154,12 +158,19 @@ export class GraphIndex {
 
   /**
    * Resolve wikilink targets from names to paths, and compute backlinks.
+   *
+   * Iterates `rawOutLinks` (original wikilink targets captured at indexNote time)
+   * rather than `outLinks` (which gets mutated to resolved paths on first run).
+   * This makes the function idempotent and survives `resolveAllBacklinks` calls
+   * after `removeNote`/`updateNote` without losing edges to nodes that briefly
+   * disappeared from the index.
    */
   private resolveLinks(): void {
     for (const [path, node] of this.nodes) {
       const resolvedLinks = new Set<string>();
+      const rawTargets = this.rawOutLinks.get(path) ?? [];
 
-      for (const linkTarget of node.outLinks) {
+      for (const linkTarget of rawTargets) {
         const resolved = this.resolveWikilink(linkTarget);
         if (resolved) {
           resolvedLinks.add(resolved);
@@ -194,6 +205,7 @@ export class GraphIndex {
    * Re-index a single note after it changes on disk.
    */
   async updateNote(notePath: string): Promise<void> {
+    notePath = notePath.replace(/\\/g, "/");
     // Remove old data
     this.removeNote(notePath);
     // Re-index
@@ -206,6 +218,7 @@ export class GraphIndex {
    * Remove a note from the index.
    */
   removeNote(notePath: string): void {
+    notePath = notePath.replace(/\\/g, "/");
     const node = this.nodes.get(notePath);
     if (!node) return;
 

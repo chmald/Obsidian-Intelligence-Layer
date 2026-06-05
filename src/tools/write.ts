@@ -19,6 +19,7 @@ import {
 import { validateVaultPath, validationError } from "../validation.js";
 import { securePath, noteExists } from "../vault.js";
 import { appendToSection, executeWrite, logWrite } from "../gate.js";
+import { invalidateSearchIndex } from "../search.js";
 
 /**
  * Register all Write tools on the MCP server.
@@ -26,10 +27,28 @@ import { appendToSection, executeWrite, logWrite } from "../gate.js";
 export function registerWriteTools(
   server: McpServer,
   vaultPath: string,
-  _graph: GraphIndex,
+  graph: GraphIndex,
   cache: SessionCache,
   config: OilConfig,
 ): void {
+  // Synchronously refresh the graph + search index after a successful write.
+  // The chokidar watcher would normally do this, but on cloud-synced vaults
+  // (OneDrive, SharePoint) FS events are unreliable and may be dropped or
+  // delayed, leaving consumers like check_vault_health and search reading
+  // stale graph state. Calling updateNote() here guarantees the graph is
+  // current the moment the tool returns.
+  const refreshIndexes = async (notePath: string): Promise<void> => {
+    try {
+      await graph.updateNote(notePath);
+    } catch (err) {
+      // Don't fail the write — the watcher will retry. Log for diagnostics.
+      console.error(
+        `[OIL] Post-write graph refresh failed for ${notePath}:`,
+        err instanceof Error ? err.message : String(err),
+      );
+    }
+    invalidateSearchIndex();
+  };
   // ── atomic_append ─────────────────────────────────────────────────────
 
   server.registerTool(
@@ -96,6 +115,7 @@ export function registerWriteTools(
 
           await appendToSection(vaultPath, path, heading, content, "append");
           cache.invalidateNote(path);
+          await refreshIndexes(path);
 
           const after = await getMtime(vaultPath, path);
 
@@ -194,6 +214,7 @@ export function registerWriteTools(
 
           await executeWrite(vaultPath, path, content, "overwrite");
           cache.invalidateNote(path);
+          await refreshIndexes(path);
 
           const after = await getMtime(vaultPath, path);
 
@@ -271,6 +292,7 @@ export function registerWriteTools(
 
           await executeWrite(vaultPath, path, content, "create");
           cache.invalidateNote(path);
+          await refreshIndexes(path);
 
           try {
             await logWrite(vaultPath, config, {

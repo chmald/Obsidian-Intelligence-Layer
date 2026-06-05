@@ -159,6 +159,56 @@ No customer reference here.
     "utf-8",
   );
 
+  // Multi-customer meeting using YAML array for customer field
+  await writeFile(
+    join(vaultRoot, "Meetings/2026-03-10 - Multi Customer Prep.md"),
+    `---
+tags: [meeting]
+customer:
+  - Contoso
+  - Fabrikam
+account:
+  - "[[Contoso]]"
+  - "[[Fabrikam]]"
+date: "2026-03-10"
+---
+
+# Multi Customer Prep
+`,
+    "utf-8",
+  );
+
+  // Meeting using nested-layout wikilink form
+  await writeFile(
+    join(vaultRoot, "Meetings/2026-03-12 - Nested Link Sync.md"),
+    `---
+tags: [meeting]
+date: "2026-03-12"
+---
+
+# Nested Link Sync
+
+See [[Customers/Contoso/Contoso]] for context.
+`,
+    "utf-8",
+  );
+
+  // Archived meeting — under _archive/ subfolder, should be excluded
+  await mkdir(join(vaultRoot, "Meetings/_archive"), { recursive: true });
+  await writeFile(
+    join(vaultRoot, "Meetings/_archive/2026-01-01 - Old Disconnected.md"),
+    `---
+tags: [meeting]
+date: "2026-01-01"
+---
+
+# Old Disconnected
+
+Archived note with no customer.
+`,
+    "utf-8",
+  );
+
   graph = new GraphIndex(vaultRoot);
   await graph.build();
 });
@@ -239,6 +289,31 @@ describe("checkVaultHealth", () => {
     // Contoso Sync is NOT orphaned
     expect(
       report.orphanedMeetings.every((m) => !m.includes("Contoso Sync")),
+    ).toBe(true);
+  });
+
+  it("does not flag multi-customer meetings using YAML array customer field", async () => {
+    const report = await checkVaultHealth(vaultRoot, graph, config, cache);
+    expect(
+      report.orphanedMeetings.every(
+        (m) => !m.includes("Multi Customer Prep"),
+      ),
+    ).toBe(true);
+  });
+
+  it("recognises nested-layout wikilinks like [[Customers/Contoso/Contoso]]", async () => {
+    const report = await checkVaultHealth(vaultRoot, graph, config, cache);
+    expect(
+      report.orphanedMeetings.every(
+        (m) => !m.includes("Nested Link Sync"),
+      ),
+    ).toBe(true);
+  });
+
+  it("excludes meetings under _archive/ from orphan detection", async () => {
+    const report = await checkVaultHealth(vaultRoot, graph, config, cache);
+    expect(
+      report.orphanedMeetings.every((m) => !m.includes("_archive/")),
     ).toBe(true);
   });
 

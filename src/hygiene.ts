@@ -235,22 +235,45 @@ async function findOrphanedMeetings(
     const node = graph.getNode(ref.path);
     if (!node) continue;
 
+    // Skip archived meetings (under <folder>/_archive/) — they're intentionally orphaned.
+    if (ref.path.includes("/_archive/")) {
+      continue;
+    }
+
     const customer = node.frontmatter.customer;
+    // String form: customer: "Acme"
     if (
       typeof customer === "string" &&
       customerSet.has(customer.toLowerCase())
     ) {
       continue; // Linked to a tracked customer
     }
+    // Array form: customer: ["Acme", "Contoso"]
+    if (
+      Array.isArray(customer) &&
+      customer.some(
+        (c) => typeof c === "string" && customerSet.has(c.toLowerCase()),
+      )
+    ) {
+      continue; // Linked to at least one tracked customer
+    }
 
-    // Check wikilinks for customer references
+    // Check wikilinks for customer references — supports both bare
+    // `[[Customer]]` and nested `[[Customers/Customer/Customer]]` forms.
     const hasCustomerLink = node.outLinks
       ? [...node.outLinks].some((link) => {
-          const linkName = link
+          // Strip leading "Customers/" prefix and trailing ".md" if present.
+          let candidate = link
             .replace(/^Customers\//, "")
             .replace(/\.md$/, "")
             .toLowerCase();
-          return customerSet.has(linkName);
+          if (customerSet.has(candidate)) return true;
+          // Nested layout: "<customer>/<customer>" — match the leaf.
+          const parts = candidate.split("/");
+          if (parts.length > 1 && customerSet.has(parts[parts.length - 1])) {
+            return true;
+          }
+          return false;
         })
       : false;
 
